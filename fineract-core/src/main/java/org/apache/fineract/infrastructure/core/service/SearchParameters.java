@@ -24,7 +24,7 @@ import lombok.Builder;
 import lombok.Getter;
 import org.apache.commons.lang3.StringUtils;
 
-@Builder
+@Builder(toBuilder = true)
 @Getter
 @AllArgsConstructor
 public class SearchParameters {
@@ -57,6 +57,7 @@ public class SearchParameters {
     @Getter(AccessLevel.NONE)
     private Boolean isSelfUser;
     private Integer legalForm;
+    private Boolean secured;
 
     public Integer getLimit() {
         if (limit == null) {
@@ -140,5 +141,9 @@ public class SearchParameters {
 
     public boolean hasLegalForm() {
         return this.legalForm != null;
+    }
+
+    public Boolean getSecured() {
+        return this.secured;
     }
 }
