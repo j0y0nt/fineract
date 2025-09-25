@@ -278,4 +278,170 @@ public class LoanApiIntegrationTest extends BaseLoanIntegrationTest {
             assertThat(loansLoanIdResponse.getPageItems().iterator().next().getSummary()).isNull();
         });
     }
+
+    @Test
+    public void test_retrieveLoansWithSecuredParameter_Works() {
+        AtomicLong securedLoanId = new AtomicLong();
+        AtomicLong unsecuredLoanId = new AtomicLong();
+        Long clientId = clientHelper.createClient(ClientHelper.defaultClientCreationRequest()).getClientId();
+
+        runAt("01 January 2023", () -> {
+            int numberOfRepayments = 3;
+            int repaymentEvery = 1;
+
+            // Create Loan Product
+            PostLoanProductsRequest product = createOnePeriod30DaysLongNoInterestPeriodicAccrualProduct()
+                    .numberOfRepayments(numberOfRepayments)
+                    .repaymentEvery(repaymentEvery)
+                    .repaymentFrequencyType(RepaymentFrequencyType.MONTHS.longValue());
+
+            PostLoanProductsResponse loanProductResponse = loanProductHelper.createLoanProduct(product);
+            Long loanProductId = loanProductResponse.getResourceId();
+
+            // Create collateral for secured loan
+            Integer collateralId = CollateralManagementHelper.createCollateralProduct(REQUEST_SPEC, RESPONSE_SPEC);
+            Integer clientCollateralId = CollateralManagementHelper.createClientCollateral(REQUEST_SPEC, RESPONSE_SPEC,
+                    String.valueOf(clientId), collateralId);
+            List<HashMap> collaterals = new ArrayList<>();
+            addCollaterals(collaterals, clientCollateralId, BigDecimal.valueOf(1));
+
+            // Apply and Approve Secured Loan (with collateral)
+            double amount = 5000.0;
+            PostLoansRequest securedLoanRequest = applyLoanRequest(clientId, loanProductId, "01 January 2023", amount, numberOfRepayments)
+                    .repaymentEvery(repaymentEvery)
+                    .repaymentFrequencyType(RepaymentFrequencyType.MONTHS)
+                    .collateral(collaterals);
+
+            PostLoansResponse securedLoanResponse = loanTransactionHelper.applyLoan(securedLoanRequest);
+            PostLoansLoanIdResponse approvedSecuredLoan = loanTransactionHelper.approveLoan(securedLoanResponse.getResourceId(),
+                    approveLoanRequest(amount, "01 January 2023"));
+            securedLoanId.set(approvedSecuredLoan.getLoanId());
+
+            // Apply and Approve Unsecured Loan (without collateral)
+            PostLoansRequest unsecuredLoanRequest = applyLoanRequest(clientId, loanProductId, "01 January 2023", amount, numberOfRepayments)
+                    .repaymentEvery(repaymentEvery)
+                    .repaymentFrequencyType(RepaymentFrequencyType.MONTHS);
+
+            PostLoansResponse unsecuredLoanResponse = loanTransactionHelper.applyLoan(unsecuredLoanRequest);
+            PostLoansLoanIdResponse approvedUnsecuredLoan = loanTransactionHelper.approveLoan(unsecuredLoanResponse.getResourceId(),
+                    approveLoanRequest(amount, "01 January 2023"));
+            unsecuredLoanId.set(approvedUnsecuredLoan.getLoanId());
+
+            disburseLoan(securedLoanId.get(), BigDecimal.valueOf(amount), "01 January 2023");
+            disburseLoan(unsecuredLoanId.get(), BigDecimal.valueOf(amount), "01 January 2023");
+        });
+
+        runAt("01 February 2023", () -> {
+            GetLoansResponse securedLoansResponse = loanTransactionHelper.retrieveAllLoans(null, null, clientId, true);
+            assertThat(securedLoansResponse.getPageItems()).isNotNull();
+            assertThat(securedLoansResponse.getPageItems().size()).isEqualTo(1);
+            assertThat(securedLoansResponse.getPageItems().iterator().next().getId()).isEqualTo(securedLoanId.get());
+
+            GetLoansResponse unsecuredLoansResponse = loanTransactionHelper.retrieveAllLoans(null, null, clientId, false);
+            assertThat(unsecuredLoansResponse.getPageItems()).isNotNull();
+            assertThat(unsecuredLoansResponse.getPageItems().size()).isEqualTo(1);
+            assertThat(unsecuredLoansResponse.getPageItems().iterator().next().getId()).isEqualTo(unsecuredLoanId.get());
+
+            GetLoansResponse allLoansResponse = loanTransactionHelper.retrieveAllLoans(null, null, clientId, null);
+            assertThat(allLoansResponse.getPageItems()).isNotNull();
+            assertThat(allLoansResponse.getPageItems().size()).isEqualTo(2);
+        });
+    }
+
+    @Test
+    public void test_retrieveLoansWithSecuredParameter_PaginationConsistency() {
+        Long clientId = clientHelper.createClient(ClientHelper.defaultClientCreationRequest()).getClientId();
+        List<Long> securedLoanIds = new ArrayList<>();
+        List<Long> unsecuredLoanIds = new ArrayList<>();
+
+        runAt("01 January 2023", () -> {
+            // Create multiple secured and unsecured loans to test pagination
+            PostLoanProductsRequest product = createOnePeriod30DaysLongNoInterestPeriodicAccrualProduct();
+            PostLoanProductsResponse loanProductResponse = loanProductHelper.createLoanProduct(product);
+            Long loanProductId = loanProductResponse.getResourceId();
+
+            // Create collateral
+            Integer collateralId = CollateralManagementHelper.createCollateralProduct(REQUEST_SPEC, RESPONSE_SPEC);
+            Integer clientCollateralId = CollateralManagementHelper.createClientCollateral(REQUEST_SPEC, RESPONSE_SPEC,
+                    String.valueOf(clientId), collateralId);
+            List<HashMap> collaterals = new ArrayList<>();
+            addCollaterals(collaterals, clientCollateralId, BigDecimal.valueOf(1));
+
+            // Create 3 secured loans
+            for (int i = 0; i < 3; i++) {
+                PostLoansRequest securedLoanRequest = applyLoanRequest(clientId, loanProductId, "01 January 2023", 1000.0, 1)
+                        .collateral(collaterals);
+                PostLoansResponse securedLoanResponse = loanTransactionHelper.applyLoan(securedLoanRequest);
+                PostLoansLoanIdResponse approvedSecuredLoan = loanTransactionHelper.approveLoan(securedLoanResponse.getResourceId(),
+                        approveLoanRequest(1000.0, "01 January 2023"));
+                securedLoanIds.add(approvedSecuredLoan.getLoanId());
+            }
+
+            // Create 2 unsecured loans
+            for (int i = 0; i < 2; i++) {
+                PostLoansRequest unsecuredLoanRequest = applyLoanRequest(clientId, loanProductId, "01 January 2023", 1000.0, 1);
+                PostLoansResponse unsecuredLoanResponse = loanTransactionHelper.applyLoan(unsecuredLoanRequest);
+                PostLoansLoanIdResponse approvedUnsecuredLoan = loanTransactionHelper.approveLoan(unsecuredLoanResponse.getResourceId(),
+                        approveLoanRequest(1000.0, "01 January 2023"));
+                unsecuredLoanIds.add(approvedUnsecuredLoan.getLoanId());
+            }
+        });
+
+        runAt("01 February 2023", () -> {
+            GetLoansResponse securedLoansResponse = loanTransactionHelper.retrieveAllLoans(null, null, clientId, true);
+            assertThat(securedLoansResponse.getPageItems().size()).isEqualTo(3);
+
+            GetLoansResponse unsecuredLoansResponse = loanTransactionHelper.retrieveAllLoans(null, null, clientId, false);
+            assertThat(unsecuredLoansResponse.getPageItems().size()).isEqualTo(2);
+
+            GetLoansResponse allLoansResponse = loanTransactionHelper.retrieveAllLoans(null, null, clientId, null);
+            assertThat(allLoansResponse.getPageItems().size()).isEqualTo(5);
+        });
+    }
+
+    @Test
+    public void test_retrieveLoansWithSecuredParameter_MultipleCollateralScenarios() {
+        Long clientId = clientHelper.createClient(ClientHelper.defaultClientCreationRequest()).getClientId();
+        AtomicLong multipleCollateralLoanId = new AtomicLong();
+
+        runAt("01 January 2023", () -> {
+            PostLoanProductsRequest product = createOnePeriod30DaysLongNoInterestPeriodicAccrualProduct();
+            PostLoanProductsResponse loanProductResponse = loanProductHelper.createLoanProduct(product);
+            Long loanProductId = loanProductResponse.getResourceId();
+
+            // Create multiple collateral items
+            Integer collateralId1 = CollateralManagementHelper.createCollateralProduct(REQUEST_SPEC, RESPONSE_SPEC);
+            Integer collateralId2 = CollateralManagementHelper.createCollateralProduct(REQUEST_SPEC, RESPONSE_SPEC);
+            
+            Integer clientCollateralId1 = CollateralManagementHelper.createClientCollateral(REQUEST_SPEC, RESPONSE_SPEC,
+                    String.valueOf(clientId), collateralId1);
+            Integer clientCollateralId2 = CollateralManagementHelper.createClientCollateral(REQUEST_SPEC, RESPONSE_SPEC,
+                    String.valueOf(clientId), collateralId2);
+            
+            List<HashMap> collaterals = new ArrayList<>();
+            addCollaterals(collaterals, clientCollateralId1, BigDecimal.valueOf(1));
+            addCollaterals(collaterals, clientCollateralId2, BigDecimal.valueOf(1));
+
+            // Create loan with multiple collateral items
+            PostLoansRequest loanRequest = applyLoanRequest(clientId, loanProductId, "01 January 2023", 5000.0, 1)
+                    .collateral(collaterals);
+            PostLoansResponse loanResponse = loanTransactionHelper.applyLoan(loanRequest);
+            PostLoansLoanIdResponse approvedLoan = loanTransactionHelper.approveLoan(loanResponse.getResourceId(),
+                    approveLoanRequest(5000.0, "01 January 2023"));
+            multipleCollateralLoanId.set(approvedLoan.getLoanId());
+
+            disburseLoan(multipleCollateralLoanId.get(), BigDecimal.valueOf(5000.0), "01 January 2023");
+        });
+
+        runAt("01 February 2023", () -> {
+            GetLoansResponse securedLoansResponse = loanTransactionHelper.retrieveAllLoans(null, null, clientId, true);
+            assertThat(securedLoansResponse.getPageItems()).isNotNull();
+            assertThat(securedLoansResponse.getPageItems().size()).isEqualTo(1);
+            assertThat(securedLoansResponse.getPageItems().iterator().next().getId()).isEqualTo(multipleCollateralLoanId.get());
+
+            GetLoansResponse unsecuredLoansResponse = loanTransactionHelper.retrieveAllLoans(null, null, clientId, false);
+            assertThat(unsecuredLoansResponse.getPageItems()).isNotNull();
+            assertThat(unsecuredLoansResponse.getPageItems().size()).isEqualTo(0);
+        });
+    }
 }

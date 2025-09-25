@@ -1712,6 +1712,11 @@ public class LoanTransactionHelper {
                 clientId, null));
     }
 
+    public GetLoansResponse retrieveAllLoans(final String accountNumber, final String associations, final Long clientId, final Boolean secured) {
+        return Calls.ok(FineractClientHelper.getFineractClient().loans.retrieveAll27(null, 0, 10, null, null, accountNumber, associations,
+                clientId, secured));
+    }
+
     @Deprecated(forRemoval = true)
     public GetLoansLoanIdTransactionsTransactionIdResponse getLoanTransaction(final Integer loanId, final Integer txnId) {
         final String GET_LOAN_CHARGES_URL = "/fineract-provider/api/v1/loans/" + loanId + "/transactions/" + txnId + "?"
